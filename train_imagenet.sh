@@ -12,7 +12,7 @@ len=${#array[@]}
 EXTRA_ARGS=${array[@]:4:$len}
 
 SCHEDULE="30 60 80"
-GAMMA="0.2 0.2 0.2"
+GAMMA="0.1 0.1 0.1"
 DECAY=1e-4
 EPOCHS=90
 BATCH_SIZE=256
