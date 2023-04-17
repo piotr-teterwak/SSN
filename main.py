@@ -31,7 +31,8 @@ model_names = sorted(name for name in models.__dict__ if name.islower() and not 
 parser = argparse.ArgumentParser(description='Training script for Networks with Soft Sharing', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 # Data / Model
-parser.add_argument('data_path', metavar='DPATH', type=str, help='Path to dataset')
+parser.add_argument('train_data_path', metavar='TDPATH', type=str, help='Path to dataset')
+parser.add_argument('val_data_path', metavar='VPATH', type=str, help='Path to dataset')
 parser.add_argument('--dataset', metavar='DSET', type=str, choices=['cifar10', 'cifar100', 'imagenet', 'rand_imagenet'], help='Choose between CIFAR/ImageNet.')
 parser.add_argument('--arch', metavar='ARCH', default='wrn', help='model architecture: ' + ' | '.join(model_names) + ' (default: shared wide resnet)')
 parser.add_argument('--effnet_arch', metavar='ARCH', default=None, help='EfficientNet architecture type')
@@ -181,9 +182,9 @@ def load_dataset():
             torch.distributed.barrier()
 
         if args.evaluate:
-            train_data = dataset(args.data_path, train=True,
+            train_data = dataset(args.train_data_path, train=True,
                                  transform=train_transform, download=True)
-            test_data = dataset(args.data_path, train=False,
+            test_data = dataset(args.val_data_path, train=False,
                                 transform=test_transform, download=True)
 
             train_loader = torch.utils.data.DataLoader(
@@ -195,9 +196,9 @@ def load_dataset():
         else:
             # partition training set into two instead.
             # note that test_data is defined using train=True
-            train_data = dataset(args.data_path, train=True,
+            train_data = dataset(args.train_data_path, train=True,
                                  transform=train_transform, download=True)
-            test_data = dataset(args.data_path, train=True,
+            test_data = dataset(args.val_data_path, train=True,
                                 transform=test_transform, download=True)
 
             indices = list(range(len(train_data)))
@@ -240,76 +241,62 @@ def load_dataset():
             torch.distributed.barrier()
 
     elif args.dataset == 'imagenet':
-        if args.dist:
-            imagenet_means = [0.485, 0.456, 0.406]
-            imagenet_stdevs = [0.229, 0.224, 0.225]
+        imagenet_means = [0.485, 0.456, 0.406]
+        imagenet_stdevs = [0.229, 0.224, 0.225]
 
-            # Can just read off SSDs.
-            if 'efficientnet' in args.arch:
-                image_size = models.efficientnet.EfficientNet.get_image_size(
-                    args.effnet_arch)
-                train_transform = transforms.Compose([
-                    models.efficientnet.augmentations.Augmentation(
-                        models.efficientnet.augmentations.get_fastautoaugment_policy()),
-                    models.efficientnet.augmentations.EfficientNetRandomCrop(
-                        image_size),
-                    transforms.Resize((image_size, image_size),
-                                      PIL.Image.BICUBIC),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ColorJitter(0.4, 0.4, 0.4),
-                ])
-                test_transform = transforms.Compose([
-                    models.efficientnet.augmentations.EfficientNetCenterCrop(
-                        image_size),
-                    transforms.Resize((image_size, image_size),
-                                      PIL.Image.BICUBIC)
-                ])
-            else:
-                # Transforms adapted from imagenet_seq's, except that color jitter
-                # and lighting are not applied in random orders, and that resizing
-                # is done with bilinear instead of cubic interpolation.
-                train_transform = transforms.Compose([
-                    transforms.RandomResizedCrop((224, 224)),
-                    # transforms.ColorJitter(0.4, 0.4, 0.4),
-                    transforms.RandomHorizontalFlip()])
-                test_transform = transforms.Compose([
-                    transforms.Resize(256),
-                    transforms.CenterCrop((224, 224))])
-            train_data = dset.ImageFolder(
-                args.data_path + '/train', transform=train_transform)
-            test_data = dset.ImageFolder(
-                args.data_path + '/val', transform=test_transform)
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_data, num_replicas=get_world_size(),
-                rank=get_world_rank())
-            train_loader = torch.utils.data.DataLoader(
-                train_data, batch_size=args.batch_size, sampler=train_sampler,
-                num_workers=args.workers, pin_memory=True,
-                collate_fn=fast_collate, drop_last=args.drop_last)
-            train_loader = PrefetchWrapper(
-                train_loader, imagenet_means, imagenet_stdevs,
-                Lighting(0.1,
-                         torch.Tensor([0.2175, 0.0188, 0.0045]).cuda(),
-                         torch.Tensor([
-                             [-0.5675, 0.7192, 0.4009],
-                             [-0.5808, -0.0045, -0.8140],
-                             [-0.5836, -0.6948, 0.4203],
-                         ]).cuda()))
-            test_sampler = torch.utils.data.distributed.DistributedSampler(
-                test_data, num_replicas=get_world_size(),
-                rank=get_world_rank())
-            test_loader = torch.utils.data.DataLoader(
-                test_data, batch_size=args.batch_size, sampler=test_sampler,
-                num_workers=args.workers, pin_memory=True,
-                collate_fn=fast_collate)
-            test_loader = PrefetchWrapper(
-                test_loader, imagenet_means, imagenet_stdevs, None)
+        # Can just read off SSDs.
+        if 'efficientnet' in args.arch:
+            image_size = models.efficientnet.EfficientNet.get_image_size(
+                args.effnet_arch)
+            train_transform = transforms.Compose([
+                models.efficientnet.augmentations.Augmentation(
+                    models.efficientnet.augmentations.get_fastautoaugment_policy()),
+                models.efficientnet.augmentations.EfficientNetRandomCrop(
+                    image_size),
+                transforms.Resize((image_size, image_size),
+                                  PIL.Image.BICUBIC),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(0.4, 0.4, 0.4),
+            ])
+            test_transform = transforms.Compose([
+                models.efficientnet.augmentations.EfficientNetCenterCrop(
+                    image_size),
+                transforms.Resize((image_size, image_size),
+                                  PIL.Image.BICUBIC)
+            ])
         else:
-            import imagenet_seq
-            train_loader = imagenet_seq.data.Loader(
-                'train', batch_size=args.batch_size, num_workers=args.workers)
-            test_loader = imagenet_seq.data.Loader(
-                'val', batch_size=args.batch_size, num_workers=args.workers)
+            # Transforms adapted from imagenet_seq's, except that color jitter
+            # and lighting are not applied in random orders, and that resizing
+            # is done with bilinear instead of cubic interpolation.
+            train_transform = transforms.Compose([
+                transforms.RandomResizedCrop((224, 224)),
+                transforms.ColorJitter(0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip()])
+            test_transform = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop((224, 224))])
+        train_data = dset.ImageFolder(
+            args.train_data_path + '/train', transform=train_transform)
+        test_data = dset.ImageFolder(
+            args.val_data_path + '/val', transform=test_transform)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_data, num_replicas=get_world_size(),
+            rank=get_world_rank())
+        train_loader = torch.utils.data.DataLoader(
+            train_data, batch_size=args.batch_size, sampler=train_sampler,
+            num_workers=args.workers, pin_memory=True,
+            collate_fn=fast_collate, drop_last=args.drop_last)
+        train_loader = PrefetchWrapper(
+            train_loader, imagenet_means, imagenet_stdevs, None)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(
+            test_data, num_replicas=get_world_size(),
+            rank=get_world_rank())
+        test_loader = torch.utils.data.DataLoader(
+            test_data, batch_size=args.batch_size, sampler=test_sampler,
+            num_workers=args.workers, pin_memory=True,
+            collate_fn=fast_collate)
+        test_loader = PrefetchWrapper(
+            test_loader, imagenet_means, imagenet_stdevs, None)
         num_classes = 1000
     elif args.dataset == 'rand_imagenet':
         imagenet_means = [0.485, 0.456, 0.406]
@@ -521,8 +508,11 @@ def main():
     print_log(f'Ranks: {get_world_size()}', log)
     print_log(f'Global batch size: {args.batch_size*get_world_size()}', log)
 
-    if get_world_rank() == 0 and not os.path.isdir(args.data_path):
-        os.makedirs(args.data_path)
+    if get_world_rank() == 0 and not os.path.isdir(args.train_data_path):
+        os.makedirs(args.train_data_path)
+
+    if get_world_rank() == 0 and not os.path.isdir(args.val_data_path):
+        os.makedirs(args.val_data_path)
 
     num_classes, train_loader, test_loader = load_dataset()
     groups = args.param_groups
