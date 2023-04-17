@@ -29,11 +29,11 @@
 
 
 #Set up conda env here
-
+# cd into project directory
 
 echo $HOSTNAME
 echo $CUDA_VISIBLE_DEVICES
 
-./train_imagenet.sh 2 imagenet none imagenet_test
+./train_imagenet.sh 4 imagenet none imagenet_test
 
 
